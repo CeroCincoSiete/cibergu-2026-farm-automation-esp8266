@@ -2,7 +2,7 @@ PROYECTO CIBERGU 2026 | EQUIPO V.A
 -------------------------------------
 Sistema de riego y dispensador inteligente controlado vía web con ESP8266. Permite activar el riego remotamente desde Adafruit IO, mediante botón físico o automáticamente por temperatura. Ideal para huertos y granjas. Bajo costo y fácil de implementar.
 -------------------------------------
-# 🌱 Smart Farm Control System - Riego y Dispensador Inteligente
+# 🌱 Farm Automation Esp8266 - Riego y Dispensador Inteligente
 
 ![Versión](https://img.shields.io/badge/versión-1.0.0-blue)
 ![ESP8266](https://img.shields.io/badge/Placa-ESP8266-orange)
@@ -11,7 +11,7 @@ Sistema de riego y dispensador inteligente controlado vía web con ESP8266. Perm
 
 ## 📖 Descripción del Proyecto
 
-**Smart Farm Control System** es una solución de automatización de bajo costo para el sector agrícola y doméstico. Permite controlar de forma remota un sistema de riego o un dispensador de pienso utilizando una placa **ESP8266 (NodeMCU)**, un servomotor, un sensor de temperatura DHT11 y un botón físico para control manual.
+**farm-automation-esp8266** es una solución de automatización de bajo costo para el sector agrícola y doméstico. Permite controlar de forma remota un sistema de riego o un dispensador de pienso utilizando una placa **ESP8266 (NodeMCU)**, un servomotor, un sensor de temperatura DHT11 y un botón físico para control manual.
 
 El proyecto nace de la necesidad de facilitar la vida a personas con huertos, jardines o pequeñas granjas que deben desplazarse diariamente para regar o alimentar a sus animales. Con este sistema, cualquier persona puede activar el riego o el dispensador desde cualquier lugar con conexión a Internet, o bien de forma automática según la temperatura ambiente.
 
