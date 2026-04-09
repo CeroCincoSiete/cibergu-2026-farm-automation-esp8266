@@ -22,10 +22,11 @@
 // ============================================
 //  PARÁMETROS DE SEGURIDAD Y TIEMPOS
 // ============================================
-const unsigned long TIEMPO_AUTO_APAGADO = 12000;   // 12 segundos (cambiado de 60s)
-const unsigned long TIMEOUT_CONEXION = 30000;      // 30 segundos sin conexión = cierre
-const unsigned long INTERVALO_TEMP = 5000;         // 5 segundos entre lecturas DHT11
-const unsigned long LIMITE_COMANDOS_POR_SEGUNDO = 1; // anti-DoS
+const unsigned long TIEMPO_AUTO_APAGADO = 12000;     // 12 segundos (apagado por tiempo)
+const unsigned long TIEMPO_ENFRIAMIENTO = 60000;    // 1 minuto (cooldown entre activaciones automáticas)
+const unsigned long TIMEOUT_CONEXION = 30000;        // 30 segundos sin conexión = cierre
+const unsigned long INTERVALO_TEMP = 5000;           // 5 segundos entre lecturas DHT11
+const unsigned long LIMITE_COMANDOS_POR_SEGUNDO = 1;  // anti-DoS
 
 // ============================================
 //  OBJETOS
@@ -48,10 +49,16 @@ unsigned long lastConexionCheck = 0;
 bool alarmaConexion = false;
 unsigned long tiempoApertura = 0;
 
+// Variables para el cooldown de la activación automática
+unsigned long ultimaActivacionAuto = 0;   // Momento de la última vez que se abrió por temperatura
+bool esperandoCooldown = false;           // Flag para no reactivar durante el enfriamiento
+
+// Variables botón
 bool botonPresionado = false;
 unsigned long lastDebounceTime = 0;
 const unsigned long debounceDelay = 200;
 
+// Watchdog
 unsigned long lastLoopTime = 0;
 
 // ============================================
@@ -74,7 +81,7 @@ void setup() {
   Serial.begin(115200);
   delay(10);
   Serial.println("\n==========================================");
-  Serial.println("  SMART FARM CONTROL v5 (APAGADO 12s)");
+  Serial.println("  SMART FARM CONTROL v6 (COOLDOWN 60s)");
   Serial.println("==========================================\n");
 
   dht.begin();
@@ -93,10 +100,12 @@ void setup() {
   conectarMQTT();
 
   lastLoopTime = millis();
-  Serial.println("[INFO] Sistema listo. Apagado automático en 12 segundos si se abre.");
+  Serial.println("[INFO] Sistema listo. Apagado automático en 12s si se abre.");
+  Serial.println("[INFO] Cooldown entre riegos automáticos: 60 segundos.");
 }
 
 void loop() {
+  // Watchdog
   if (millis() - lastLoopTime > 5000) {
     Serial.println("[ERROR] Bucle principal bloqueado. Reiniciando...");
     ESP.restart();
@@ -111,12 +120,16 @@ void loop() {
   leerTemperatura();
   leerBoton();
 
+  // Anti-DoS: reset contador de comandos por segundo
   if (millis() - lastComandoTime >= 1000) {
     comandosEnSegundo = 0;
     lastComandoTime = millis();
   }
 }
 
+// ============================================
+//  CONEXIONES
+// ============================================
 void conectarWiFi() {
   Serial.print("[WiFi] Conectando a ");
   Serial.println(WLAN_SSID);
@@ -144,7 +157,7 @@ void conectarMQTT() {
       mqtt.subscribe(topic.c_str());
       Serial.print("[MQTT] Suscrito a: ");
       Serial.println(topic);
-      publicarMensaje("Sistema seguro iniciado (apagado 12s)");
+      publicarMensaje("Sistema seguro iniciado (cooldown 60s)");
       alarmaConexion = false;
     } else {
       Serial.print("FALLÓ (rc=");
@@ -156,6 +169,9 @@ void conectarMQTT() {
   }
 }
 
+// ============================================
+//  VERIFICAR CAÍDA DE CONEXIÓN
+// ============================================
 void verificarConexion() {
   bool conectado = (WiFi.status() == WL_CONNECTED) && mqtt.connected();
   if (!conectado) {
@@ -172,6 +188,9 @@ void verificarConexion() {
   }
 }
 
+// ============================================
+//  APAGADO AUTOMÁTICO POR TIEMPO (12 segundos)
+// ============================================
 void verificarApagadoAutomatico() {
   if (anguloActual > 0 && (millis() - tiempoApertura >= TIEMPO_AUTO_APAGADO)) {
     Serial.println("[TIMER] Tiempo de apertura superado (12s). Cerrando servo.");
@@ -179,6 +198,9 @@ void verificarApagadoAutomatico() {
   }
 }
 
+// ============================================
+//  CALLBACK MQTT (anti-DoS)
+// ============================================
 void callbackMQTT(char* topic, byte* payload, unsigned int length) {
   if (comandosEnSegundo >= LIMITE_COMANDOS_POR_SEGUNDO) {
     Serial.println("[SEGURIDAD] Demasiados comandos por segundo. Ignorando.");
@@ -199,6 +221,9 @@ void callbackMQTT(char* topic, byte* payload, unsigned int length) {
   }
 }
 
+// ============================================
+//  MOVER SERVO (con sincronización y gestión de tiempos)
+// ============================================
 void moverServo(int angulo, String origen) {
   if (angulo == anguloActual) {
     Serial.println("[INFO] El servo ya está en esa posición.");
@@ -235,6 +260,9 @@ void moverServo(int angulo, String origen) {
   }
 }
 
+// ============================================
+//  PUBLICAR MENSAJE EN FEED estado-manual
+// ============================================
 void publicarMensaje(String texto) {
   String topic = String(IO_USERNAME) + "/feeds/estado-manual";
   if (mqtt.publish(topic.c_str(), texto.c_str())) {
@@ -244,6 +272,9 @@ void publicarMensaje(String texto) {
   }
 }
 
+// ============================================
+//  LECTURA DE TEMPERATURA CON COOLDOWN
+// ============================================
 void leerTemperatura() {
   if (millis() - lastTempRead >= INTERVALO_TEMP) {
     lastTempRead = millis();
@@ -257,18 +288,43 @@ void leerTemperatura() {
     Serial.print(temperaturaActual);
     Serial.println(" °C");
 
+    // Publicar temperatura
     String topic = String(IO_USERNAME) + "/feeds/temperatura";
     if (!mqtt.publish(topic.c_str(), String(temperaturaActual).c_str())) {
       Serial.println("[ERROR] Fallo al publicar temperatura");
     }
 
-    if (temperaturaActual > limiteTemperatura && anguloActual == 0) {
-      Serial.println("[AUTO] Temperatura >30°C. Abriendo riego.");
+    // ============================================
+    //  LÓGICA DE ACTIVACIÓN AUTOMÁTICA CON COOLDOWN
+    // ============================================
+    // 1. Verificar si la temperatura supera el umbral
+    // 2. Verificar que el servo esté cerrado (ángulo == 0)
+    // 3. Verificar que NO esté en periodo de cooldown
+    //    (cooldown = TIEMPO_ENFRIAMIENTO después de la última activación automática)
+    // ============================================
+    bool temperaturaAlta = (temperaturaActual > limiteTemperatura);
+    bool servoCerrado = (anguloActual == 0);
+    bool enCooldown = (millis() - ultimaActivacionAuto < TIEMPO_ENFRIAMIENTO);
+
+    if (temperaturaAlta && servoCerrado && !enCooldown) {
+      Serial.println("[AUTO] Temperatura >30°C y servo cerrado. Abriendo riego.");
+      ultimaActivacionAuto = millis();   // Registrar momento de activación
       moverServo(90, "automatico");
+    } else if (temperaturaAlta && servoCerrado && enCooldown) {
+      // No se activa porque está en cooldown
+      unsigned long tiempoRestante = (TIEMPO_ENFRIAMIENTO - (millis() - ultimaActivacionAuto)) / 1000;
+      Serial.print("[AUTO] Temperatura alta pero en cooldown. Faltan ");
+      Serial.print(tiempoRestante);
+      Serial.println(" segundos para poder activar de nuevo.");
+    } else if (temperaturaAlta && !servoCerrado) {
+      Serial.println("[AUTO] Temperatura alta pero el servo ya está abierto. No se hace nada.");
     }
   }
 }
 
+// ============================================
+//  BOTÓN FÍSICO (alterna entre 0 y 90)
+// ============================================
 void leerBoton() {
   int lectura = digitalRead(BOTON_PIN);
   if (lectura == LOW && !botonPresionado) {
