@@ -211,5 +211,5 @@ Proyecto desarrollado para la Hackatón CIBERGU 2026.
 
 📄 Licencia
 ---
+MIT License – ver archivo `LICENSE`.
 
-MIT License – ver archivo LICENSE.
