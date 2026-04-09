@@ -210,5 +210,6 @@ Proyecto desarrollado para la Hackatón CIBERGU 2026.
   - Comunidad open‑source por las librerías utilizadas.
 
 📄 Licencia
+---
 
 MIT License – ver archivo LICENSE.
